@@ -39,6 +39,7 @@ my %DEFAULT_SSL_ARGS = (
     SSL_verifycn_scheme => undef,  # don't verify cn
     SSL_verifycn_name => undef,    # use from PeerAddr/PeerHost
     SSL_npn_protocols => undef,    # meaning depends whether on server or client side
+    SSL_alpn_protocols => undef,   # meaning depends whether on server or client side
     SSL_honor_cipher_order => 0,   # client order gets preference
     SSL_cipher_list => 'ALL:!LOW',
 );
@@ -187,10 +188,12 @@ BEGIN {
 my $can_client_sni;  # do we support SNI on the client side
 my $can_server_sni;  # do we support SNI on the server side
 my $can_npn;         # do we support NPN
+my $can_alpn;        # do we support ALPN
 BEGIN {
     $can_client_sni = Net::SSLeay::OPENSSL_VERSION_NUMBER() >= 0x01000000;
     $can_server_sni = defined &Net::SSLeay::get_servername;
     $can_npn        = defined &Net::SSLeay::P_next_proto_negotiated;
+    $can_alpn       = defined &Net::SSLeay::P_alpn_selected;
 }
 
 # Export some stuff
@@ -1312,6 +1315,7 @@ sub error {
 sub can_client_sni { return $can_client_sni }
 sub can_server_sni { return $can_server_sni }
 sub can_npn        { return $can_npn }
+sub can_alpn       { return $can_alpn }
 
 sub DESTROY {
     my $self = shift or return;
@@ -1376,6 +1380,13 @@ sub next_proto_negotiated {
     return $self->error("NPN not supported in Net::SSLeay") if ! $can_npn;
     my $ssl = $self->_get_ssl_object || return;
     return Net::SSLeay::P_next_proto_negotiated($ssl);
+}
+
+sub alpn_selected {
+    my $self = shift;
+    return $self->error("ALPN not supported in Net::SSLeay") if ! $can_alpn;
+    my $ssl = $self->_get_ssl_object || return;
+    return Net::SSLeay::P_alpn_selected($ssl);
 }
 
 sub opened {
@@ -1656,6 +1667,19 @@ sub new {
 	    # on client side SSL_npn_protocols means a list of preferred protocols
 	    # negotiation algorithm used is "as-openssl-implements-it"
 	    Net::SSLeay::CTX_set_next_proto_select_cb($ctx, $proto_list);
+	}
+    }
+
+    if ( my $proto_list = $arg_hash->{SSL_alpn_protocols} ) {
+	return IO::Socket::SSL->error("ALPN not supported in Net::SSLeay")
+	    if ! $can_alpn;
+	if($arg_hash->{SSL_server}) {
+	    # on server side SSL_alpn_protocols means a list of preferred protocols
+	    # negotiation algorithm used is "as-openssl-implements-it"
+	    Net::SSLeay::CTX_set_alpn_select_cb($ctx, $proto_list);
+	} else {
+	    # on client side SSL_alpn_protocols means a list of supported protocols
+	    Net::SSLeay::CTX_set_alpn_protos($ctx, $proto_list);
 	}
     }
 
@@ -2365,6 +2389,21 @@ To check support you might call C<IO::Socket::SSL->can_npn()>.
 If you use this option with an unsupported Net::SSLeay/OpenSSL it will 
 throw an error.
 
+Please note NPN is deprecated in favor of more recent ALPN extension (see below).
+
+=item SSL_alpn_protocols
+
+If used on the client side it specifies list of protocols supported by TLS
+client as an array ref, e.g. ['spdy/3','http/2.0','http/1.1'].
+On the server side it specifies the protocols offered by the server for ALPN
+as an array ref.
+See also method L<alpn_selected>.
+
+Application Layer Protocol Negotioation (NPN) is available with Net::SSLeay 1.56+ and openssl-1.0.2+.
+To check support you might call C<IO::Socket::SSL->can_alpn()>.
+If you use this option with an unsupported Net::SSLeay/OpenSSL it will
+throw an error.
+
 =back
 
 =item B<close(...)>
@@ -2540,6 +2579,16 @@ for both client and server side of SSL connection.
 
 NPN support is available with Net::SSLeay 1.46+ and openssl-1.0.1+.
 To check support you might call C<IO::Socket::SSL->can_npn()>.
+
+Please note NPN is deprecated in favor of more recent ALPN extension (see below).
+
+=item B<alpn_selected()>
+
+This method returns the name of negotiated protocol - e.g. 'http/1.1'. It works
+for both client and server side of TLS connection.
+
+NPN support is available with Net::SSLeay 1.56+ and openssl-1.0.2+.
+To check support you might call C<IO::Socket::SSL->can_alpn()>.
 
 =item B<errstr()>
 

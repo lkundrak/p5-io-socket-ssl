@@ -1,3 +1,4 @@
+- add support for ALPN TLS extension
 1.955 2013/10/11
 - support for perfect forward secrecy using ECDH, if the Net::SSLeay version
   supports it.
